@@ -71,10 +71,10 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${AUTH_URL}/send-otp`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ action: "send-otp", phone }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка отправки");
@@ -124,11 +124,11 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
     setLoading(true);
     setError("");
     try {
-      const body: Record<string, string> = { phone, code: codeStr };
+      const body: Record<string, string> = { action: "verify-otp", phone, code: codeStr };
       if (nameVal) body.name = nameVal;
       if (usernameVal) body.username = usernameVal;
 
-      const res = await fetch(`${AUTH_URL}/verify-otp`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

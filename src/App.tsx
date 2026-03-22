@@ -32,7 +32,7 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
   useEffect(() => {
     const savedToken = localStorage.getItem("aura_token");
     if (!savedToken) { setChecking(false); return; }
-    fetch(`${AUTH_URL}/me`, {
+    fetch(`${AUTH_URL}?action=me`, {
       headers: { "Authorization": `Bearer ${savedToken}` },
     })
       .then((r) => r.json())
@@ -56,9 +56,10 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
   const handleLogout = () => {
     const t = localStorage.getItem("aura_token");
     if (t) {
-      fetch(`${AUTH_URL}/logout`, {
+      fetch(AUTH_URL, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${t}` },
+        headers: { "Authorization": `Bearer ${t}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "logout" }),
       }).catch(() => {});
       localStorage.removeItem("aura_token");
     }

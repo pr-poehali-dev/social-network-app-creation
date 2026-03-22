@@ -96,8 +96,15 @@ def handler(event: dict, context) -> dict:
         except Exception:
             return err("Невалидный JSON", 400)
 
+    # Действие определяем в порядке приоритета:
+    # 1. Поле action в JSON-теле {"action": "send-otp"}
+    # 2. Query-параметр ?action=me
+    # 3. Последний сегмент пути /send-otp -> send-otp
+    qs = event.get("queryStringParameters") or {}
+    action = body.get("action") or qs.get("action") or path.strip("/").split("/")[-1] or ""
+
     # ── POST /send-otp ──────────────────────────────────────────────────────
-    if method == "POST" and path.endswith("/send-otp"):
+    if method == "POST" and action == "send-otp":
         phone_raw = body.get("phone", "").strip()
         if not phone_raw:
             return err("Укажите номер телефона")
@@ -141,7 +148,7 @@ def handler(event: dict, context) -> dict:
         })
 
     # ── POST /verify-otp ────────────────────────────────────────────────────
-    if method == "POST" and path.endswith("/verify-otp"):
+    if method == "POST" and action == "verify-otp":
         phone_raw = body.get("phone", "").strip()
         code = body.get("code", "").strip()
         name = body.get("name", "").strip()
@@ -231,7 +238,7 @@ def handler(event: dict, context) -> dict:
         })
 
     # ── GET /me ─────────────────────────────────────────────────────────────
-    if method == "GET" and path.endswith("/me"):
+    if method == "GET" and action == "me":
         token = (event.get("headers") or {}).get("X-Authorization", "").replace("Bearer ", "").strip()
         if not token:
             return err("Не авторизован", 401)
@@ -271,7 +278,7 @@ def handler(event: dict, context) -> dict:
         })
 
     # ── POST /logout ─────────────────────────────────────────────────────────
-    if method == "POST" and path.endswith("/logout"):
+    if method == "POST" and action == "logout":
         token = (event.get("headers") or {}).get("X-Authorization", "").replace("Bearer ", "").strip()
         if token:
             conn = get_conn()
