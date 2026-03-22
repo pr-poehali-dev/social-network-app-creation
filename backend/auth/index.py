@@ -1,6 +1,7 @@
 """
 Аутентификация через номер телефона (SMS OTP).
 Методы: POST /send-otp, POST /verify-otp, POST /register, GET /me, POST /logout
+SMS отправляется через sms.ru (SMSRU_API_ID).
 """
 import json
 import os
@@ -8,6 +9,8 @@ import random
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
+from urllib.request import urlopen
+from urllib.parse import urlencode
 
 import psycopg2
 import psycopg2.extras
@@ -32,6 +35,35 @@ def ok(data: dict, status: int = 200):
 
 def err(msg: str, status: int = 400):
     return {"statusCode": status, "headers": {**CORS, "Content-Type": "application/json"}, "body": json.dumps({"error": msg}, ensure_ascii=False)}
+
+
+def send_sms(phone: str, message: str) -> dict:
+    """Отправка SMS через sms.ru. Возвращает {"ok": True} или {"ok": False, "error": "..."}"""
+    api_id = os.environ.get("SMSRU_API_ID", "")
+    if not api_id:
+        return {"ok": False, "error": "SMSRU_API_ID не задан"}
+    # Номер без + для sms.ru
+    phone_digits = phone.replace("+", "").replace(" ", "")
+    params = urlencode({
+        "api_id": api_id,
+        "to": phone_digits,
+        "msg": message,
+        "json": 1,
+    })
+    url = f"https://sms.ru/sms/send?{params}"
+    try:
+        with urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        # sms.ru возвращает {"status": "OK", "sms": {phone: {"status": "OK", ...}}}
+        if data.get("status") == "OK":
+            sms_status = list(data.get("sms", {}).values())
+            if sms_status and sms_status[0].get("status") == "OK":
+                return {"ok": True}
+            sms_err = sms_status[0].get("status_text", "Ошибка") if sms_status else "Ошибка"
+            return {"ok": False, "error": sms_err}
+        return {"ok": False, "error": data.get("status_text", "Ошибка sms.ru")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 def gen_otp() -> str:
@@ -87,25 +119,24 @@ def handler(event: dict, context) -> dict:
             "INSERT INTO otp_codes (phone, code, expires_at) VALUES (%s, %s, %s)",
             (phone, code, expires)
         )
+        # Проверяем — новый пользователь или нет
+        cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
+        is_new_user = cur.fetchone() is None
         conn.commit()
         cur.close()
         conn.close()
 
-        # В продакшне здесь был бы вызов SMS-провайдера
-        # Пока возвращаем код в ответе (только для разработки!)
-        is_new_user = False
-        conn2 = get_conn()
-        cur2 = conn2.cursor()
-        cur2.execute("SELECT id FROM users WHERE phone=%s", (phone,))
-        is_new_user = cur2.fetchone() is None
-        cur2.close()
-        conn2.close()
+        # Отправляем SMS через sms.ru
+        sms_text = f"Aura: ваш код подтверждения — {code}. Действителен 10 минут."
+        sms_result = send_sms(phone, sms_text)
+
+        if not sms_result["ok"]:
+            return err(f"Не удалось отправить SMS: {sms_result['error']}", 503)
 
         return ok({
             "success": True,
             "phone": phone,
             "is_new_user": is_new_user,
-            "dev_code": code,  # убрать в продакшне
             "message": f"Код отправлен на {phone}"
         })
 

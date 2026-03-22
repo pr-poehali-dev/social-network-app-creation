@@ -28,7 +28,6 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [isNewUser, setIsNewUser] = useState(false);
-  const [devCode, setDevCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resendSeconds, setResendSeconds] = useState(0);
@@ -80,7 +79,6 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка отправки");
       setIsNewUser(data.is_new_user);
-      setDevCode(data.dev_code || "");
       setStep("code");
       setResendSeconds(60);
       setTimeout(() => codeRefs.current[0]?.focus(), 100);
@@ -244,15 +242,6 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
                   Отправили SMS на <span className="text-foreground font-normal">{phone}</span>
                 </p>
               </div>
-
-              {devCode && (
-                <div className="bg-amber-950/40 border border-amber-800/40 rounded-xl px-4 py-2.5 flex items-center gap-2">
-                  <Icon name="Info" size={14} className="text-amber-400 flex-shrink-0" />
-                  <p className="text-amber-300 text-xs font-light">
-                    Тест-режим: код <span className="font-mono font-semibold">{devCode}</span>
-                  </p>
-                </div>
-              )}
 
               <div className="flex gap-2.5 justify-center">
                 {code.map((digit, idx) => (
