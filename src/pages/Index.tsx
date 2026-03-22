@@ -1,14 +1,23 @@
 import { useState } from "react";
 import Icon from "@/components/ui/icon";
 
-const CURRENT_USER = {
-  id: 0,
-  name: "Александра В.",
-  username: "@aleksandra",
-  avatar: "АВ",
-  followers: 1240,
-  following: 386,
-};
+interface AuthUser {
+  id: number;
+  phone: string;
+  name: string;
+  username: string;
+  bio: string | null;
+  avatar_url: string | null;
+  followers_count: number;
+  following_count: number;
+  posts_count: number;
+}
+
+interface IndexProps {
+  currentUser: AuthUser;
+  token: string;
+  onLogout: () => void;
+}
 
 const STORIES = [
   { id: 1, user: "Виктория", username: "@viktoria", avatar: "ВМ", seen: false, color: "from-rose-800 to-amber-700" },
@@ -97,7 +106,21 @@ const INITIAL_MESSAGES: Record<number, { id: number; text: string; own: boolean;
 
 type Tab = "feed" | "messages" | "notifications" | "profile";
 
-export default function Index() {
+export default function Index({ currentUser, onLogout }: IndexProps) {
+  const avatarLetters = (name: string) => {
+    const parts = name.trim().split(" ");
+    return parts.length >= 2
+      ? (parts[0][0] + parts[1][0]).toUpperCase()
+      : name.slice(0, 2).toUpperCase();
+  };
+  const CURRENT_USER = {
+    id: currentUser.id,
+    name: currentUser.name || "Пользователь",
+    username: currentUser.username ? `@${currentUser.username}` : currentUser.phone,
+    avatar: avatarLetters(currentUser.name || "АА"),
+    followers: currentUser.followers_count,
+    following: currentUser.following_count,
+  };
   const [activeTab, setActiveTab] = useState<Tab>("feed");
   const [posts, setPosts] = useState(INITIAL_POSTS);
   const [notifications, setNotifications] = useState(NOTIFICATIONS);
@@ -285,8 +308,12 @@ export default function Index() {
               <p className="text-sm font-medium truncate">{CURRENT_USER.name}</p>
               <p className="text-xs text-muted-foreground truncate">{CURRENT_USER.username}</p>
             </div>
-            <button className="ml-auto text-muted-foreground hover:text-foreground transition-colors">
-              <Icon name="Settings" size={16} />
+            <button
+              onClick={onLogout}
+              title="Выйти"
+              className="ml-auto text-muted-foreground hover:text-rose-400 transition-colors"
+            >
+              <Icon name="LogOut" size={16} />
             </button>
           </div>
         </div>
@@ -663,6 +690,13 @@ export default function Index() {
                 <button className="btn-gold flex-1 text-center">Редактировать профиль</button>
                 <button className="btn-outline-gold px-3">
                   <Icon name="Share2" size={16} />
+                </button>
+                <button
+                  onClick={onLogout}
+                  title="Выйти"
+                  className="btn-outline-gold px-3 hover:border-rose-500/50 hover:text-rose-400"
+                >
+                  <Icon name="LogOut" size={16} />
                 </button>
               </div>
             </div>
