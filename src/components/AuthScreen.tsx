@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import Icon from "@/components/ui/icon";
 
 const AUTH_URL = "https://functions.poehali.dev/d17f85f6-519e-4598-9571-d11fb7a92696";
 
-type Step = "phone" | "code" | "register";
+type Mode = "login" | "register";
 
 interface AuthUser {
   id: number;
@@ -22,23 +22,14 @@ interface AuthScreenProps {
 }
 
 export default function AuthScreen({ onAuth }: AuthScreenProps) {
-  const [step, setStep] = useState<Step>("phone");
+  const [mode, setMode] = useState<Mode>("login");
   const [phone, setPhone] = useState("");
-  const [code, setCode] = useState(["", "", "", "", "", ""]);
+  const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
-  const [isNewUser, setIsNewUser] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [resendSeconds, setResendSeconds] = useState(0);
-
-  const codeRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  useEffect(() => {
-    if (resendSeconds <= 0) return;
-    const t = setTimeout(() => setResendSeconds((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendSeconds]);
 
   const formatPhone = (val: string) => {
     const digits = val.replace(/\D/g, "");
@@ -56,77 +47,42 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    const digits = raw.replace(/\D/g, "");
-    setPhone(formatPhone(digits));
+    setPhone(formatPhone(e.target.value.replace(/\D/g, "")));
     setError("");
   };
 
-  const handleSendOtp = async () => {
+  const handleSubmit = async () => {
     const digits = phone.replace(/\D/g, "");
     if (digits.length < 11) {
       setError("Введите корректный номер телефона");
       return;
     }
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(AUTH_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send-otp", phone }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка отправки");
-      setIsNewUser(data.is_new_user);
-      setStep("code");
-      setResendSeconds(60);
-      setTimeout(() => codeRefs.current[0]?.focus(), 100);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Ошибка сети");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCodeChange = (idx: number, val: string) => {
-    if (!/^\d*$/.test(val)) return;
-    const next = [...code];
-    next[idx] = val.slice(-1);
-    setCode(next);
-    setError("");
-    if (val && idx < 5) codeRefs.current[idx + 1]?.focus();
-    if (next.every((c) => c !== "")) {
-      handleVerify(next.join(""));
-    }
-  };
-
-  const handleCodeKeyDown = (idx: number, e: React.KeyboardEvent) => {
-    if (e.key === "Backspace" && !code[idx] && idx > 0) {
-      codeRefs.current[idx - 1]?.focus();
-    }
-  };
-
-  const handleVerify = async (codeStr?: string) => {
-    const fullCode = codeStr || code.join("");
-    if (fullCode.length < 6) {
-      setError("Введите 6-значный код");
+    if (!password || password.length < 6) {
+      setError("Пароль должен быть не менее 6 символов");
       return;
     }
-    if (isNewUser && step !== "register") {
-      setStep("register");
+    if (mode === "register" && !name.trim()) {
+      setError("Введите ваше имя");
       return;
     }
-    await doVerify(fullCode);
-  };
+    if (mode === "register" && username && !/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+      setError("Username: 3–30 символов, только латиница, цифры и _");
+      return;
+    }
 
-  const doVerify = async (codeStr: string, nameVal?: string, usernameVal?: string) => {
     setLoading(true);
     setError("");
+
     try {
-      const body: Record<string, string> = { action: "verify-otp", phone, code: codeStr };
-      if (nameVal) body.name = nameVal;
-      if (usernameVal) body.username = usernameVal;
+      const body: Record<string, string> = {
+        action: mode,
+        phone,
+        password,
+      };
+      if (mode === "register") {
+        body.name = name.trim();
+        if (username.trim()) body.username = username.trim();
+      }
 
       const res = await fetch(AUTH_URL, {
         method: "POST",
@@ -134,32 +90,28 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка верификации");
+      if (!res.ok) throw new Error(data.error || "Ошибка");
       localStorage.setItem("aura_token", data.token);
       onAuth(data.user, data.token);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Ошибка сети");
-      if (step === "code") setCode(["", "", "", "", "", ""]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRegister = async () => {
-    if (!name.trim()) {
-      setError("Введите ваше имя");
-      return;
-    }
-    if (username && !/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-      setError("Username: 3–30 символов, только латиница, цифры и _");
-      return;
-    }
-    await doVerify(code.join(""), name.trim(), username.trim() || undefined);
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    setError("");
+    setPassword("");
+    setName("");
+    setUsername("");
   };
+
+  const inputCls = "w-full bg-secondary rounded-xl pl-11 pr-4 py-3.5 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors";
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
-      {/* Background decoration */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 -left-32 w-64 h-64 rounded-full bg-gold/5 blur-3xl" />
         <div className="absolute bottom-1/4 -right-32 w-96 h-96 rounded-full bg-gold/4 blur-3xl" />
@@ -175,190 +127,130 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
         </div>
 
         <div className="glass rounded-3xl p-8 space-y-6">
+          {/* Tab switcher */}
+          <div className="flex bg-secondary rounded-xl p-1">
+            <button
+              onClick={() => switchMode("login")}
+              className={`flex-1 py-2 text-sm rounded-lg font-medium transition-all ${
+                mode === "login"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Войти
+            </button>
+            <button
+              onClick={() => switchMode("register")}
+              className={`flex-1 py-2 text-sm rounded-lg font-medium transition-all ${
+                mode === "register"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Зарегистрироваться
+            </button>
+          </div>
 
-          {/* ── STEP: phone ── */}
-          {step === "phone" && (
-            <>
-              <div>
-                <h2 className="font-display text-2xl mb-1">Войти или зарегистрироваться</h2>
-                <p className="text-muted-foreground text-sm font-light">
-                  Введите номер телефона — отправим код подтверждения
-                </p>
+          <div className="space-y-3">
+            {/* Phone */}
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                <Icon name="Phone" size={16} className="text-muted-foreground" />
               </div>
+              <input
+                type="tel"
+                value={phone}
+                onChange={handlePhoneChange}
+                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                placeholder="+7 (999) 000-00-00"
+                className={inputCls}
+                autoFocus
+              />
+            </div>
 
-              <div className="space-y-3">
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                    <Icon name="Phone" size={16} className="text-muted-foreground" />
-                  </div>
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={handlePhoneChange}
-                    onKeyDown={(e) => e.key === "Enter" && handleSendOtp()}
-                    placeholder="+7 (999) 000-00-00"
-                    className="w-full bg-secondary rounded-xl pl-11 pr-4 py-3.5 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors"
-                    autoFocus
-                  />
+            {/* Name (register only) */}
+            {mode === "register" && (
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                  <Icon name="User" size={16} className="text-muted-foreground" />
                 </div>
-
-                {error && (
-                  <p className="text-red-400 text-xs flex items-center gap-1.5">
-                    <Icon name="AlertCircle" size={13} /> {error}
-                  </p>
-                )}
-
-                <button
-                  onClick={handleSendOtp}
-                  disabled={loading}
-                  className="btn-gold w-full py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  {loading ? (
-                    <Icon name="Loader" size={16} className="animate-spin" />
-                  ) : (
-                    <>Получить код <Icon name="ArrowRight" size={16} /></>
-                  )}
-                </button>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setError(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  placeholder="Ваше имя"
+                  className={inputCls}
+                  maxLength={50}
+                />
               </div>
+            )}
 
-              <p className="text-xs text-muted-foreground text-center font-light leading-relaxed">
-                Нажимая «Получить код», вы соглашаетесь с условиями использования Aura
-              </p>
-            </>
-          )}
-
-          {/* ── STEP: code ── */}
-          {step === "code" && (
-            <>
-              <div>
-                <button
-                  onClick={() => { setStep("phone"); setCode(["", "", "", "", "", ""]); setError(""); }}
-                  className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mb-4 transition-colors"
-                >
-                  <Icon name="ArrowLeft" size={15} /> Изменить номер
-                </button>
-                <h2 className="font-display text-2xl mb-1">Код подтверждения</h2>
-                <p className="text-muted-foreground text-sm font-light">
-                  Отправили SMS на <span className="text-foreground font-normal">{phone}</span>
-                </p>
+            {/* Username (register only) */}
+            {mode === "register" && (
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</div>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => { setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "")); setError(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  placeholder="username (необязательно)"
+                  className="w-full bg-secondary rounded-xl pl-9 pr-4 py-3.5 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors font-mono"
+                  maxLength={30}
+                />
               </div>
+            )}
 
-              <div className="flex gap-2.5 justify-center">
-                {code.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    ref={(el) => { codeRefs.current[idx] = el; }}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleCodeChange(idx, e.target.value)}
-                    onKeyDown={(e) => handleCodeKeyDown(idx, e)}
-                    className={`w-11 h-13 text-center text-xl font-display bg-secondary rounded-xl border transition-all outline-none
-                      ${digit ? "border-gold/60 text-gold" : "border-transparent text-foreground"}
-                      focus:border-gold/50`}
-                    style={{ height: "52px" }}
-                  />
-                ))}
+            {/* Password */}
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                <Icon name="Lock" size={16} className="text-muted-foreground" />
               </div>
-
-              {error && (
-                <p className="text-red-400 text-xs flex items-center gap-1.5 justify-center">
-                  <Icon name="AlertCircle" size={13} /> {error}
-                </p>
-              )}
-
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                placeholder="Пароль (мин. 6 символов)"
+                className="w-full bg-secondary rounded-xl pl-11 pr-11 py-3.5 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors"
+              />
               <button
-                onClick={() => handleVerify()}
-                disabled={loading || code.some((c) => !c)}
-                className="btn-gold w-full py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                tabIndex={-1}
               >
-                {loading ? <Icon name="Loader" size={16} className="animate-spin" /> : "Подтвердить"}
+                <Icon name={showPassword ? "EyeOff" : "Eye"} size={16} />
               </button>
+            </div>
 
-              <div className="text-center">
-                {resendSeconds > 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    Отправить повторно через {resendSeconds} с
-                  </p>
-                ) : (
-                  <button
-                    onClick={handleSendOtp}
-                    className="text-xs gold-text hover:opacity-80 transition-opacity"
-                  >
-                    Отправить код повторно
-                  </button>
-                )}
-              </div>
-            </>
-          )}
+            {error && (
+              <p className="text-red-400 text-xs flex items-center gap-1.5">
+                <Icon name="AlertCircle" size={13} /> {error}
+              </p>
+            )}
 
-          {/* ── STEP: register ── */}
-          {step === "register" && (
-            <>
-              <div>
-                <button
-                  onClick={() => { setStep("code"); setError(""); }}
-                  className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mb-4 transition-colors"
-                >
-                  <Icon name="ArrowLeft" size={15} /> Назад
-                </button>
-                <h2 className="font-display text-2xl mb-1">Создать профиль</h2>
-                <p className="text-muted-foreground text-sm font-light">
-                  Как вас зовут?
-                </p>
-              </div>
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="btn-gold w-full py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {loading ? (
+                <Icon name="Loader" size={16} className="animate-spin" />
+              ) : mode === "login" ? (
+                <>Войти <Icon name="ArrowRight" size={16} /></>
+              ) : (
+                <>Создать аккаунт <Icon name="Sparkles" size={16} /></>
+              )}
+            </button>
+          </div>
 
-              <div className="space-y-3">
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                    <Icon name="User" size={16} className="text-muted-foreground" />
-                  </div>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => { setName(e.target.value); setError(""); }}
-                    onKeyDown={(e) => e.key === "Enter" && handleRegister()}
-                    placeholder="Ваше имя"
-                    className="w-full bg-secondary rounded-xl pl-11 pr-4 py-3.5 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors"
-                    autoFocus
-                    maxLength={50}
-                  />
-                </div>
-
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</div>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => { setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "")); setError(""); }}
-                    onKeyDown={(e) => e.key === "Enter" && handleRegister()}
-                    placeholder="username (необязательно)"
-                    className="w-full bg-secondary rounded-xl pl-9 pr-4 py-3.5 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors font-mono"
-                    maxLength={30}
-                  />
-                </div>
-
-                {error && (
-                  <p className="text-red-400 text-xs flex items-center gap-1.5">
-                    <Icon name="AlertCircle" size={13} /> {error}
-                  </p>
-                )}
-
-                <button
-                  onClick={handleRegister}
-                  disabled={loading || !name.trim()}
-                  className="btn-gold w-full py-3.5 flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  {loading ? (
-                    <Icon name="Loader" size={16} className="animate-spin" />
-                  ) : (
-                    <>Войти в Aura <Icon name="Sparkles" size={16} /></>
-                  )}
-                </button>
-              </div>
-            </>
-          )}
+          <p className="text-xs text-muted-foreground text-center font-light leading-relaxed">
+            {mode === "login"
+              ? "Нет аккаунта? Нажмите «Зарегистрироваться» выше"
+              : "Регистрируясь, вы соглашаетесь с условиями использования Aura"}
+          </p>
         </div>
       </div>
     </div>

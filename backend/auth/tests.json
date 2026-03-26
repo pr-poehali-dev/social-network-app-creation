@@ -10,8 +10,33 @@
       "name": "GET / — 404 not found",
       "method": "GET",
       "path": "/",
-      "expectedStatus": 404,
-      "expectedBody": {"error": "Маршрут не найден"},
+      "expectedStatus": 404
+    },
+    {
+      "name": "register — missing password",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "register", "phone": "+79991234567"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "Пароль должен быть не менее 6 символов"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "login — wrong credentials",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "login", "phone": "+79991234567", "password": "wrongpass"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "Неверный номер телефона или пароль"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "me — no token",
+      "method": "GET",
+      "path": "/",
+      "queryStringParameters": {"action": "me"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "Не авторизован"},
       "bodyMatcher": "partial"
     }
   ]

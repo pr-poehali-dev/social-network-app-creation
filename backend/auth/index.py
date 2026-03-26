@@ -1,16 +1,19 @@
 """
-Аутентификация через номер телефона (SMS OTP).
-Методы: POST /send-otp, POST /verify-otp, POST /register, GET /me, POST /logout
-SMS отправляется через sms.ru (SMSRU_API_ID).
+Аутентификация по номеру телефона и паролю. v3
+Методы (action в теле POST):
+  register — регистрация (phone, password, name, username?)
+  login    — вход (phone, password)
+  me       — GET, проверка сессии
+  logout   — завершение сессии
 """
+import hashlib
+import hmac
 import json
 import os
 import random
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
-from urllib.request import urlopen
-from urllib.parse import urlencode
 
 import psycopg2
 import psycopg2.extras
@@ -30,44 +33,28 @@ def get_conn():
 
 
 def ok(data: dict, status: int = 200):
-    return {"statusCode": status, "headers": {**CORS, "Content-Type": "application/json"}, "body": json.dumps(data, ensure_ascii=False, default=str)}
+    return {
+        "statusCode": status,
+        "headers": {**CORS, "Content-Type": "application/json"},
+        "body": json.dumps(data, ensure_ascii=False, default=str),
+    }
 
 
 def err(msg: str, status: int = 400):
-    return {"statusCode": status, "headers": {**CORS, "Content-Type": "application/json"}, "body": json.dumps({"error": msg}, ensure_ascii=False)}
+    return {
+        "statusCode": status,
+        "headers": {**CORS, "Content-Type": "application/json"},
+        "body": json.dumps({"error": msg}, ensure_ascii=False),
+    }
 
 
-def send_sms(phone: str, message: str) -> dict:
-    """Отправка SMS через sms.ru. Возвращает {"ok": True} или {"ok": False, "error": "..."}"""
-    api_id = os.environ.get("SMSRU_API_ID", "")
-    if not api_id:
-        return {"ok": False, "error": "SMSRU_API_ID не задан"}
-    # Номер без + для sms.ru
-    phone_digits = phone.replace("+", "").replace(" ", "")
-    params = urlencode({
-        "api_id": api_id,
-        "to": phone_digits,
-        "msg": message,
-        "json": 1,
-    })
-    url = f"https://sms.ru/sms/send?{params}"
-    try:
-        with urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-        # sms.ru возвращает {"status": "OK", "sms": {phone: {"status": "OK", ...}}}
-        if data.get("status") == "OK":
-            sms_status = list(data.get("sms", {}).values())
-            if sms_status and sms_status[0].get("status") == "OK":
-                return {"ok": True}
-            sms_err = sms_status[0].get("status_text", "Ошибка") if sms_status else "Ошибка"
-            return {"ok": False, "error": sms_err}
-        return {"ok": False, "error": data.get("status_text", "Ошибка sms.ru")}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+def hash_password(password: str) -> str:
+    salt = os.environ.get("PASSWORD_SALT", "aura_salt_v1")
+    return hashlib.sha256((salt + password).encode()).hexdigest()
 
 
-def gen_otp() -> str:
-    return "".join(random.choices(string.digits, k=6))
+def verify_password(password: str, stored_hash: str) -> bool:
+    return hmac.compare_digest(hash_password(password), stored_hash)
 
 
 def gen_token() -> str:
@@ -83,6 +70,20 @@ def normalize_phone(phone: str) -> str:
     return "+" + digits
 
 
+def user_dict(user) -> dict:
+    return {
+        "id": user["id"],
+        "phone": user["phone"],
+        "name": user["name"],
+        "username": user["username"],
+        "bio": user["bio"],
+        "avatar_url": user["avatar_url"],
+        "followers_count": user["followers_count"],
+        "following_count": user["following_count"],
+        "posts_count": user["posts_count"],
+    }
+
+
 def handler(event: dict, context) -> dict:
     if event.get("httpMethod") == "OPTIONS":
         return {"statusCode": 200, "headers": CORS, "body": ""}
@@ -96,148 +97,103 @@ def handler(event: dict, context) -> dict:
         except Exception:
             return err("Невалидный JSON", 400)
 
-    # Действие определяем в порядке приоритета:
-    # 1. Поле action в JSON-теле {"action": "send-otp"}
-    # 2. Query-параметр ?action=me
-    # 3. Последний сегмент пути /send-otp -> send-otp
     qs = event.get("queryStringParameters") or {}
     action = body.get("action") or qs.get("action") or path.strip("/").split("/")[-1] or ""
 
-    # ── POST /send-otp ──────────────────────────────────────────────────────
-    if method == "POST" and action == "send-otp":
+    # ── POST register ──────────────────────────────────────────────────────
+    if method == "POST" and action == "register":
         phone_raw = body.get("phone", "").strip()
-        if not phone_raw:
-            return err("Укажите номер телефона")
-        phone = normalize_phone(phone_raw)
-        if len(phone) < 12:
-            return err("Некорректный номер телефона")
-
-        code = gen_otp()
-        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
-
-        conn = get_conn()
-        cur = conn.cursor()
-        # Инвалидируем старые коды
-        cur.execute(
-            "UPDATE otp_codes SET is_used=TRUE WHERE phone=%s AND is_used=FALSE",
-            (phone,)
-        )
-        cur.execute(
-            "INSERT INTO otp_codes (phone, code, expires_at) VALUES (%s, %s, %s)",
-            (phone, code, expires)
-        )
-        # Проверяем — новый пользователь или нет
-        cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
-        is_new_user = cur.fetchone() is None
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        # Отправляем SMS через sms.ru
-        sms_text = f"Aura: ваш код подтверждения — {code}. Действителен 10 минут."
-        sms_result = send_sms(phone, sms_text)
-
-        if not sms_result["ok"]:
-            return err(f"Не удалось отправить SMS: {sms_result['error']}", 503)
-
-        return ok({
-            "success": True,
-            "phone": phone,
-            "is_new_user": is_new_user,
-            "message": f"Код отправлен на {phone}"
-        })
-
-    # ── POST /verify-otp ────────────────────────────────────────────────────
-    if method == "POST" and action == "verify-otp":
-        phone_raw = body.get("phone", "").strip()
-        code = body.get("code", "").strip()
+        password = body.get("password", "").strip()
         name = body.get("name", "").strip()
         username = body.get("username", "").strip()
 
-        if not phone_raw or not code:
-            return err("Укажите телефон и код")
+        if not phone_raw:
+            return err("Укажите номер телефона")
+        if not password or len(password) < 6:
+            return err("Пароль должен быть не менее 6 символов")
+        if not name:
+            return err("Укажите ваше имя")
+        if username and not __import__("re").match(r"^[a-zA-Z0-9_]{3,30}$", username):
+            return err("Username: 3–30 символов, только латиница, цифры и _")
 
         phone = normalize_phone(phone_raw)
-        now = datetime.now(timezone.utc)
+        pw_hash = hash_password(password)
 
         conn = get_conn()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        cur.execute(
-            """SELECT id FROM otp_codes
-               WHERE phone=%s AND code=%s AND is_used=FALSE AND expires_at > %s
-               ORDER BY created_at DESC LIMIT 1""",
-            (phone, code, now)
-        )
-        otp_row = cur.fetchone()
-        if not otp_row:
+        cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
+        if cur.fetchone():
             cur.close()
             conn.close()
-            return err("Неверный или просроченный код", 401)
+            return err("Номер телефона уже зарегистрирован", 409)
 
-        # Инвалидируем код
-        cur.execute("UPDATE otp_codes SET is_used=TRUE WHERE id=%s", (otp_row["id"],))
-
-        # Ищем или создаём пользователя
-        cur.execute("SELECT * FROM users WHERE phone=%s", (phone,))
-        user = cur.fetchone()
-
-        if not user:
-            # Новый пользователь — нужны name и username
-            if not name:
-                conn.rollback()
-                cur.close()
-                conn.close()
-                return err("Укажите имя для регистрации", 422)
-            # Генерируем username если не передан
-            if not username:
-                base = "user_" + "".join(random.choices(string.digits, k=6))
-                username = base
-            # Проверяем уникальность username
+        if username:
             cur.execute("SELECT id FROM users WHERE username=%s", (username,))
             if cur.fetchone():
-                conn.rollback()
                 cur.close()
                 conn.close()
                 return err("Имя пользователя уже занято", 409)
 
-            cur.execute(
-                """INSERT INTO users (phone, name, username)
-                   VALUES (%s, %s, %s) RETURNING *""",
-                (phone, name, username)
-            )
-            user = cur.fetchone()
+        if not username:
+            username = "user_" + "".join(random.choices(string.digits, k=6))
 
-        # Создаём сессию
+        cur.execute(
+            """INSERT INTO users (phone, name, username, password_hash)
+               VALUES (%s, %s, %s, %s) RETURNING *""",
+            (phone, name, username, pw_hash),
+        )
+        user = cur.fetchone()
+
         token = gen_token()
         expires_session = datetime.now(timezone.utc) + timedelta(days=30)
-        device = event.get("headers", {}).get("User-Agent", "unknown")[:200]
+        device = (event.get("headers") or {}).get("User-Agent", "unknown")[:200]
         cur.execute(
             """INSERT INTO sessions (user_id, token, device_info, expires_at)
                VALUES (%s, %s, %s, %s)""",
-            (user["id"], token, device, expires_session)
+            (user["id"], token, device, expires_session),
         )
         conn.commit()
         cur.close()
         conn.close()
 
-        return ok({
-            "success": True,
-            "token": token,
-            "user": {
-                "id": user["id"],
-                "phone": user["phone"],
-                "name": user["name"],
-                "username": user["username"],
-                "bio": user["bio"],
-                "avatar_url": user["avatar_url"],
-                "followers_count": user["followers_count"],
-                "following_count": user["following_count"],
-                "posts_count": user["posts_count"],
-            }
-        })
+        return ok({"success": True, "token": token, "user": user_dict(user)}, 201)
 
-    # ── GET /me ─────────────────────────────────────────────────────────────
+    # ── POST login ─────────────────────────────────────────────────────────
+    if method == "POST" and action == "login":
+        phone_raw = body.get("phone", "").strip()
+        password = body.get("password", "").strip()
+
+        if not phone_raw or not password:
+            return err("Укажите телефон и пароль")
+
+        phone = normalize_phone(phone_raw)
+
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM users WHERE phone=%s", (phone,))
+        user = cur.fetchone()
+
+        if not user or not user.get("password_hash") or not verify_password(password, user["password_hash"]):
+            cur.close()
+            conn.close()
+            return err("Неверный номер телефона или пароль", 401)
+
+        token = gen_token()
+        expires_session = datetime.now(timezone.utc) + timedelta(days=30)
+        device = (event.get("headers") or {}).get("User-Agent", "unknown")[:200]
+        cur.execute(
+            """INSERT INTO sessions (user_id, token, device_info, expires_at)
+               VALUES (%s, %s, %s, %s)""",
+            (user["id"], token, device, expires_session),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return ok({"success": True, "token": token, "user": user_dict(user)})
+
+    # ── GET me ─────────────────────────────────────────────────────────────
     if method == "GET" and action == "me":
         token = (event.get("headers") or {}).get("X-Authorization", "").replace("Bearer ", "").strip()
         if not token:
@@ -250,10 +206,9 @@ def handler(event: dict, context) -> dict:
             """SELECT u.* FROM sessions s
                JOIN users u ON u.id = s.user_id
                WHERE s.token=%s AND s.expires_at > %s""",
-            (token, now)
+            (token, now),
         )
         user = cur.fetchone()
-        # Обновляем last_seen
         if user:
             cur.execute("UPDATE sessions SET last_seen_at=%s WHERE token=%s", (now, token))
             conn.commit()
@@ -263,30 +218,18 @@ def handler(event: dict, context) -> dict:
         if not user:
             return err("Сессия истекла", 401)
 
-        return ok({
-            "user": {
-                "id": user["id"],
-                "phone": user["phone"],
-                "name": user["name"],
-                "username": user["username"],
-                "bio": user["bio"],
-                "avatar_url": user["avatar_url"],
-                "followers_count": user["followers_count"],
-                "following_count": user["following_count"],
-                "posts_count": user["posts_count"],
-            }
-        })
+        return ok({"user": user_dict(user)})
 
-    # ── POST /logout ─────────────────────────────────────────────────────────
+    # ── POST logout ────────────────────────────────────────────────────────
     if method == "POST" and action == "logout":
         token = (event.get("headers") or {}).get("X-Authorization", "").replace("Bearer ", "").strip()
         if token:
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("UPDATE sessions SET expires_at=NOW() WHERE token=%s", (token,))
+            cur.execute("DELETE FROM sessions WHERE token=%s", (token,))
             conn.commit()
             cur.close()
             conn.close()
         return ok({"success": True})
 
-    return err("Маршрут не найден", 404)
+    return err("Метод не найден", 404)

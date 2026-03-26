@@ -58,7 +58,7 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
     if (t) {
       fetch(AUTH_URL, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${t}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${t}`, "Content-Type": "application/json", "X-Authorization": `Bearer ${t}` },
         body: JSON.stringify({ action: "logout" }),
       }).catch(() => {});
       localStorage.removeItem("aura_token");
