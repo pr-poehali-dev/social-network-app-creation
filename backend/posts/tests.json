@@ -1,0 +1,26 @@
+{
+  "tests": [
+    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+    {
+      "name": "POST create — no token",
+      "method": "POST", "path": "/",
+      "body": {"action": "create", "text": "Hello"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "Не авторизован"}, "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET feed — no token",
+      "method": "GET", "path": "/",
+      "queryStringParameters": {"action": "feed"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "Не авторизован"}, "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST update_profile — no token",
+      "method": "POST", "path": "/",
+      "body": {"action": "update_profile", "name": "Test"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "Не авторизован"}, "bodyMatcher": "partial"
+    }
+  ]
+}

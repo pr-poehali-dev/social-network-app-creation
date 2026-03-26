@@ -4,6 +4,7 @@ import Icon from "@/components/ui/icon";
 const SEARCH_URL = "https://functions.poehali.dev/f1bacf56-907c-439c-bd8c-f1c762124106";
 const FOLLOW_URL = "https://functions.poehali.dev/badd9677-1943-428f-bfc6-fc01277d8b87";
 const CHATS_URL  = "https://functions.poehali.dev/d7fbd9ba-d019-45d0-9dbb-86755e663131";
+const POSTS_URL  = "https://functions.poehali.dev/078d2408-c5d0-4c52-b51b-7a9c24b8554d";
 
 interface AuthUser {
   id: number;
@@ -87,14 +88,115 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)} д`;
 }
 
+// ── Карточка поста ───────────────────────────────────────────────────────────
+interface Post {
+  id: number;
+  text: string;
+  likes_count: number;
+  comments_count: number;
+  created_at: string;
+  liked: boolean;
+  author: { id: number; name: string; username: string | null; avatar_url: string | null };
+}
+
+function PostCard({ post, token, onLike }: { post: Post; token: string; onLike: (id: number, liked: boolean, count: number) => void }) {
+  const [likeLoading, setLikeLoading] = useState(false);
+
+  const handleLike = async () => {
+    if (likeLoading) return;
+    setLikeLoading(true);
+    try {
+      const res = await fetch(POSTS_URL, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ action: "like", post_id: post.id }),
+      });
+      const data = await res.json();
+      onLike(post.id, data.liked, data.likes_count);
+    } finally {
+      setLikeLoading(false);
+    }
+  };
+
+  return (
+    <div className="post-card animate-fade-in">
+      <div className="p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${colorForId(post.author.id)} flex items-center justify-center text-white text-sm font-medium flex-shrink-0`}>
+            {avatarLetters(post.author.name)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">{post.author.name}</p>
+            <p className="text-xs text-muted-foreground">{timeAgo(post.created_at)}</p>
+          </div>
+        </div>
+        <p className="text-sm font-light leading-relaxed text-foreground/90 mb-4">{post.text}</p>
+        <div className="flex items-center gap-5 pt-3 border-t border-border">
+          <button
+            onClick={handleLike}
+            disabled={likeLoading}
+            className={`flex items-center gap-1.5 text-sm transition-all ${post.liked ? "text-rose-400" : "text-muted-foreground hover:text-rose-400"}`}
+          >
+            <Icon name="Heart" size={16} />
+            <span>{post.likes_count}</span>
+          </button>
+          <button className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <Icon name="MessageCircle" size={16} />
+            <span>{post.comments_count}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Вкладка: Лента ───────────────────────────────────────────────────────────
-function FeedTab({ currentUser }: { currentUser: AuthUser }) {
+function FeedTab({ currentUser, token }: { currentUser: AuthUser; token: string }) {
   const initials = avatarLetters(currentUser.name);
   const [text, setText] = useState("");
   const [showComposer, setShowComposer] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadFeed = useCallback(async () => {
+    try {
+      const res = await fetch(`${POSTS_URL}?action=feed`, { headers: authHeaders(token) });
+      const data = await res.json();
+      setPosts(data.posts || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { loadFeed(); }, [loadFeed]);
+
+  const handlePublish = async () => {
+    if (!text.trim() || publishing) return;
+    setPublishing(true);
+    try {
+      const res = await fetch(POSTS_URL, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ action: "create", text: text.trim() }),
+      });
+      if (res.ok) {
+        setText("");
+        setShowComposer(false);
+        loadFeed();
+      }
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleLike = (id: number, liked: boolean, count: number) => {
+    setPosts((prev) => prev.map((p) => p.id === id ? { ...p, liked, likes_count: count } : p));
+  };
 
   return (
     <div className="flex-1 max-w-2xl w-full mx-auto px-4 py-6 space-y-5">
+      {/* Composer */}
       <div className="post-card p-4">
         {showComposer ? (
           <div className="space-y-3 animate-fade-in">
@@ -114,8 +216,12 @@ function FeedTab({ currentUser }: { currentUser: AuthUser }) {
               <button onClick={() => { setShowComposer(false); setText(""); }} className="btn-outline-gold">
                 Отмена
               </button>
-              <button disabled={!text.trim()} className="btn-gold disabled:opacity-40"
-                onClick={() => { setText(""); setShowComposer(false); }}>
+              <button
+                disabled={!text.trim() || publishing}
+                className="btn-gold disabled:opacity-40 flex items-center gap-2"
+                onClick={handlePublish}
+              >
+                {publishing ? <Icon name="Loader" size={14} className="animate-spin" /> : null}
                 Опубликовать
               </button>
             </div>
@@ -133,13 +239,23 @@ function FeedTab({ currentUser }: { currentUser: AuthUser }) {
         )}
       </div>
 
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center mb-4 opacity-50">
-          <Icon name="Newspaper" size={28} className="text-muted-foreground" />
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Icon name="Loader" size={24} className="animate-spin text-muted-foreground" />
         </div>
-        <p className="font-display text-2xl opacity-40">Лента пуста</p>
-        <p className="text-sm text-muted-foreground mt-1">Подпишитесь на людей, чтобы видеть их публикации</p>
-      </div>
+      ) : posts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center mb-4 opacity-50">
+            <Icon name="Newspaper" size={28} className="text-muted-foreground" />
+          </div>
+          <p className="font-display text-2xl opacity-40">Лента пуста</p>
+          <p className="text-sm text-muted-foreground mt-1">Подпишитесь на людей или создайте первую публикацию</p>
+        </div>
+      ) : (
+        posts.map((post) => (
+          <PostCard key={post.id} post={post} token={token} onLike={handleLike} />
+        ))
+      )}
     </div>
   );
 }
@@ -538,69 +654,170 @@ function MessagesTab({ token, currentUserId, openChatId, onChatOpened }: {
   );
 }
 
-// ── Вкладка: Профиль ─────────────────────────────────────────────────────────
-function ProfileTab({ currentUser, onLogout }: { currentUser: AuthUser; onLogout: () => void }) {
-  const initials = avatarLetters(currentUser.name);
+// ── Модалка редактирования профиля ───────────────────────────────────────────
+function EditProfileModal({ user, token, onSave, onClose }: {
+  user: AuthUser; token: string;
+  onSave: (u: AuthUser) => void; onClose: () => void;
+}) {
+  const [name, setName] = useState(user.name || "");
+  const [username, setUsername] = useState(user.username || "");
+  const [bio, setBio] = useState(user.bio || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!name.trim()) { setError("Введите имя"); return; }
+    setSaving(true); setError("");
+    try {
+      const res = await fetch(POSTS_URL, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ action: "update_profile", name: name.trim(), username: username.trim(), bio: bio.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка");
+      localStorage.setItem("aura_user", JSON.stringify(data.user));
+      onSave(data.user);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls = "w-full bg-secondary rounded-xl px-4 py-3 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors";
+
   return (
-    <div className="flex-1 max-w-xl w-full mx-auto px-4 py-6 space-y-5 animate-fade-in">
-      <div className="post-card p-6">
-        <div className="flex items-start gap-5">
-          <div className="relative flex-shrink-0">
-            <div className="w-20 h-20 rounded-full gold-gradient flex items-center justify-center text-2xl font-semibold text-background">
-              {initials}
-            </div>
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="font-display text-3xl">{currentUser.name || "Пользователь"}</h2>
-            {currentUser.username && (
-              <p className="text-muted-foreground text-sm mt-0.5">@{currentUser.username}</p>
-            )}
-            {currentUser.bio && (
-              <p className="text-sm font-light mt-2 leading-relaxed text-foreground/80">{currentUser.bio}</p>
-            )}
-            <div className="flex gap-6 mt-4">
-              <div>
-                <p className="font-display text-xl">{currentUser.posts_count}</p>
-                <p className="text-xs text-muted-foreground">публикации</p>
-              </div>
-              <div>
-                <p className="font-display text-xl">{currentUser.followers_count}</p>
-                <p className="text-xs text-muted-foreground">подписчики</p>
-              </div>
-              <div>
-                <p className="font-display text-xl">{currentUser.following_count}</p>
-                <p className="text-xs text-muted-foreground">подписки</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="flex gap-3 mt-5">
-          <button className="btn-gold flex-1 text-center">Редактировать профиль</button>
-          <button
-            onClick={onLogout}
-            className="btn-outline-gold px-3 hover:border-rose-500/50 hover:text-rose-400"
-          >
-            <Icon name="LogOut" size={16} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-background rounded-3xl p-6 space-y-4 animate-scale-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-2xl">Редактировать профиль</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <Icon name="X" size={20} />
           </button>
         </div>
-      </div>
 
-      <div className="post-card p-6 flex flex-col items-center text-center py-12">
-        <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mb-3 opacity-50">
-          <Icon name="Grid2x2" size={20} className="text-muted-foreground" />
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Имя</label>
+            <input type="text" value={name} onChange={(e) => { setName(e.target.value); setError(""); }}
+              className={inputCls} placeholder="Ваше имя" maxLength={100} />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Username</label>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">@</span>
+              <input type="text" value={username}
+                onChange={(e) => { setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "")); setError(""); }}
+                className="w-full bg-secondary rounded-xl pl-9 pr-4 py-3 text-sm outline-none placeholder-muted-foreground border border-transparent focus:border-gold/40 transition-colors font-mono"
+                placeholder="username" maxLength={30} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">О себе</label>
+            <textarea value={bio} onChange={(e) => { setBio(e.target.value); setError(""); }}
+              className={`${inputCls} resize-none min-h-[80px]`}
+              placeholder="Расскажите о себе..." maxLength={300} />
+          </div>
         </div>
-        <p className="font-display text-lg opacity-40">Публикаций пока нет</p>
-        <p className="text-xs text-muted-foreground mt-1">Создайте первую запись в ленте</p>
+
+        {error && <p className="text-red-400 text-xs flex items-center gap-1.5"><Icon name="AlertCircle" size={13} /> {error}</p>}
+
+        <div className="flex gap-3 pt-1">
+          <button onClick={onClose} className="btn-outline-gold flex-1">Отмена</button>
+          <button onClick={handleSave} disabled={saving} className="btn-gold flex-1 flex items-center justify-center gap-2 disabled:opacity-50">
+            {saving ? <Icon name="Loader" size={14} className="animate-spin" /> : null}
+            Сохранить
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
+// ── Вкладка: Профиль ─────────────────────────────────────────────────────────
+function ProfileTab({ currentUser, token, onLogout, onUserUpdate }: {
+  currentUser: AuthUser; token: string;
+  onLogout: () => void; onUserUpdate: (u: AuthUser) => void;
+}) {
+  const [user, setUser] = useState(currentUser);
+  const [showEdit, setShowEdit] = useState(false);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+
+  useEffect(() => { setUser(currentUser); }, [currentUser]);
+
+  useEffect(() => {
+    fetch(`${POSTS_URL}?action=user_posts`, { headers: authHeaders(token) })
+      .then((r) => r.json())
+      .then((d) => setPosts(d.posts || []))
+      .finally(() => setLoadingPosts(false));
+  }, [token]);
+
+  const handleSave = (u: AuthUser) => {
+    setUser(u);
+    onUserUpdate(u);
+    setShowEdit(false);
+  };
+
+  const handleLike = (id: number, liked: boolean, count: number) => {
+    setPosts((prev) => prev.map((p) => p.id === id ? { ...p, liked, likes_count: count } : p));
+  };
+
+  const initials = avatarLetters(user.name);
+
+  return (
+    <div className="flex-1 max-w-xl w-full mx-auto px-4 py-6 space-y-5 animate-fade-in">
+      {showEdit && <EditProfileModal user={user} token={token} onSave={handleSave} onClose={() => setShowEdit(false)} />}
+
+      <div className="post-card p-6">
+        <div className="flex items-start gap-5">
+          <div className="w-20 h-20 rounded-full gold-gradient flex items-center justify-center text-2xl font-semibold text-background flex-shrink-0">
+            {initials}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-display text-3xl">{user.name || "Пользователь"}</h2>
+            {user.username && <p className="text-muted-foreground text-sm mt-0.5">@{user.username}</p>}
+            {user.bio && <p className="text-sm font-light mt-2 leading-relaxed text-foreground/80">{user.bio}</p>}
+            <div className="flex gap-6 mt-4">
+              <div><p className="font-display text-xl">{user.posts_count}</p><p className="text-xs text-muted-foreground">публикации</p></div>
+              <div><p className="font-display text-xl">{user.followers_count}</p><p className="text-xs text-muted-foreground">подписчики</p></div>
+              <div><p className="font-display text-xl">{user.following_count}</p><p className="text-xs text-muted-foreground">подписки</p></div>
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-3 mt-5">
+          <button onClick={() => setShowEdit(true)} className="btn-gold flex-1 text-center">Редактировать профиль</button>
+          <button onClick={onLogout} className="btn-outline-gold px-3 hover:border-rose-500/50 hover:text-rose-400">
+            <Icon name="LogOut" size={16} />
+          </button>
+        </div>
+      </div>
+
+      {loadingPosts ? (
+        <div className="flex justify-center py-8"><Icon name="Loader" size={20} className="animate-spin text-muted-foreground" /></div>
+      ) : posts.length === 0 ? (
+        <div className="post-card p-6 flex flex-col items-center text-center py-12">
+          <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mb-3 opacity-50">
+            <Icon name="Grid2x2" size={20} className="text-muted-foreground" />
+          </div>
+          <p className="font-display text-lg opacity-40">Публикаций пока нет</p>
+          <p className="text-xs text-muted-foreground mt-1">Создайте первую запись в ленте</p>
+        </div>
+      ) : (
+        posts.map((post) => <PostCard key={post.id} post={post} token={token} onLike={handleLike} />)
+      )}
+    </div>
+  );
+}
+
 // ── Основной компонент ────────────────────────────────────────────────────────
-export default function Index({ currentUser, token, onLogout }: IndexProps) {
+export default function Index({ currentUser: initialUser, token, onLogout }: IndexProps) {
   const [activeTab, setActiveTab] = useState<Tab>("feed");
-  const [pendingChatUserId, setPendingChatUserId] = useState<number | null>(null);
   const [pendingOpenChatId, setPendingOpenChatId] = useState<number | null>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser>(initialUser);
+
+  useEffect(() => { setCurrentUser(initialUser); }, [initialUser]);
 
   const handleStartChat = async (userId: number) => {
     try {
@@ -667,7 +884,7 @@ export default function Index({ currentUser, token, onLogout }: IndexProps) {
 
       {/* Main */}
       <main className="flex-1 lg:ml-64 flex flex-col min-h-screen pb-16 lg:pb-0 overflow-hidden">
-        {activeTab === "feed" && <FeedTab currentUser={currentUser} />}
+        {activeTab === "feed" && <FeedTab currentUser={currentUser} token={token} />}
         {activeTab === "search" && (
           <SearchTab token={token} currentUserId={currentUser.id} onStartChat={handleStartChat} />
         )}
@@ -679,7 +896,14 @@ export default function Index({ currentUser, token, onLogout }: IndexProps) {
             onChatOpened={() => setPendingOpenChatId(null)}
           />
         )}
-        {activeTab === "profile" && <ProfileTab currentUser={currentUser} onLogout={onLogout} />}
+        {activeTab === "profile" && (
+          <ProfileTab
+            currentUser={currentUser}
+            token={token}
+            onLogout={onLogout}
+            onUserUpdate={(u) => setCurrentUser(u)}
+          />
+        )}
       </main>
 
       {/* Bottom nav (mobile) */}
