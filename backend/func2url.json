@@ -1,4 +1,6 @@
 {
+  "chats": "https://functions.poehali.dev/d7fbd9ba-d019-45d0-9dbb-86755e663131",
+  "follow": "https://functions.poehali.dev/badd9677-1943-428f-bfc6-fc01277d8b87",
   "search": "https://functions.poehali.dev/f1bacf56-907c-439c-bd8c-f1c762124106",
   "auth": "https://functions.poehali.dev/d17f85f6-519e-4598-9571-d11fb7a92696"
 }
