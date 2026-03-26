@@ -54,29 +54,31 @@ def handler(event: dict, context) -> dict:
     conn = get_conn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Нормализуем телефон: если похоже на номер — ищем по phone
+    # Считаем запрос телефоном только если он состоит почти целиком из цифр (и +, пробелов, скобок)
+    non_digit = "".join(c for c in q if not c.isdigit() and c not in "+() -")
     digits = "".join(c for c in q if c.isdigit())
-    phone_search = None
-    if len(digits) >= 4:
-        phone_search = "%" + digits + "%"
+    is_phone = len(non_digit) == 0 and len(digits) >= 4
 
-    if phone_search:
+    like_q = "%" + q.lower() + "%"
+
+    if is_phone:
+        phone_search = "%" + digits + "%"
         cur.execute(
             """SELECT id, name, username, bio, avatar_url, followers_count, following_count, posts_count
                FROM users
                WHERE is_active = TRUE
-                 AND (phone LIKE %s OR LOWER(username) LIKE LOWER(%s) OR LOWER(name) LIKE LOWER(%s))
+                 AND (phone LIKE %s OR LOWER(username) LIKE %s OR LOWER(name) LIKE %s)
                LIMIT 20""",
-            (phone_search, "%" + q + "%", "%" + q + "%"),
+            (phone_search, like_q, like_q),
         )
     else:
         cur.execute(
             """SELECT id, name, username, bio, avatar_url, followers_count, following_count, posts_count
                FROM users
                WHERE is_active = TRUE
-                 AND (LOWER(username) LIKE LOWER(%s) OR LOWER(name) LIKE LOWER(%s))
+                 AND (LOWER(username) LIKE %s OR LOWER(name) LIKE %s)
                LIMIT 20""",
-            ("%" + q + "%", "%" + q + "%"),
+            (like_q, like_q),
         )
 
     users = cur.fetchall()
