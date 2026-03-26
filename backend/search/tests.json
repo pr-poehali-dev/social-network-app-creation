@@ -1,0 +1,25 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "GET — short query",
+      "method": "GET",
+      "path": "/",
+      "queryStringParameters": {"q": "a"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "Запрос слишком короткий (минимум 2 символа)"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST not allowed",
+      "method": "POST",
+      "path": "/",
+      "expectedStatus": 405
+    }
+  ]
+}
