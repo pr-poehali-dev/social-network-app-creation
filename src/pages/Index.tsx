@@ -772,7 +772,7 @@ function ProfileTab({ currentUser, token, onLogout, onUserUpdate }: {
 
       <div className="post-card p-6">
         <div className="flex items-start gap-5">
-          <div className="w-20 h-20 rounded-full gold-gradient flex items-center justify-center text-2xl font-semibold text-background flex-shrink-0">
+          <div className="w-20 h-20 rounded-full green-gradient flex items-center justify-center text-2xl font-semibold text-background flex-shrink-0 py-0 px-0">
             {initials}
           </div>
           <div className="flex-1 min-w-0">
