@@ -846,7 +846,7 @@ export default function Index({ currentUser: initialUser, token, onLogout }: Ind
       {/* Sidebar (desktop) */}
       <aside className="hidden lg:flex flex-col w-64 border-r border-border px-4 py-6 fixed h-full">
         <div className="mb-8 px-2">
-          <h1 className="font-display text-3xl gold-text tracking-wider">Aura</h1>
+          <h1 className="font-display gold-text tracking-wider text-5xl px-[50px] py-[25px] my-0 mx-0 font-light text-justify">Aura</h1>
         </div>
         <nav className="flex-1 space-y-1">
           {navItems.map(({ tab, icon, label }) => (
