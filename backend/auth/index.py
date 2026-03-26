@@ -1,5 +1,5 @@
 """
-Аутентификация по номеру телефона и паролю. v3
+Аутентификация по номеру телефона и паролю.
 Методы (action в теле POST):
   register — регистрация (phone, password, name, username?)
   login    — вход (phone, password)
@@ -11,6 +11,7 @@ import hmac
 import json
 import os
 import random
+import re
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
@@ -113,8 +114,8 @@ def handler(event: dict, context) -> dict:
             return err("Пароль должен быть не менее 6 символов")
         if not name:
             return err("Укажите ваше имя")
-        if username and not __import__("re").match(r"^[a-zA-Z0-9_]{3,30}$", username):
-            return err("Username: 3–30 символов, только латиница, цифры и _")
+        if username and not re.match(r"^[a-zA-Z0-9_]{3,30}$", username):
+            return err("Username: 3-30 символов, только латиница, цифры и _")
 
         phone = normalize_phone(phone_raw)
         pw_hash = hash_password(password)
@@ -139,8 +140,7 @@ def handler(event: dict, context) -> dict:
             username = "user_" + "".join(random.choices(string.digits, k=6))
 
         cur.execute(
-            """INSERT INTO users (phone, name, username, password_hash)
-               VALUES (%s, %s, %s, %s) RETURNING *""",
+            "INSERT INTO users (phone, name, username, password_hash) VALUES (%s, %s, %s, %s) RETURNING *",
             (phone, name, username, pw_hash),
         )
         user = cur.fetchone()
@@ -149,8 +149,7 @@ def handler(event: dict, context) -> dict:
         expires_session = datetime.now(timezone.utc) + timedelta(days=30)
         device = (event.get("headers") or {}).get("User-Agent", "unknown")[:200]
         cur.execute(
-            """INSERT INTO sessions (user_id, token, device_info, expires_at)
-               VALUES (%s, %s, %s, %s)""",
+            "INSERT INTO sessions (user_id, token, device_info, expires_at) VALUES (%s, %s, %s, %s)",
             (user["id"], token, device, expires_session),
         )
         conn.commit()
@@ -183,8 +182,7 @@ def handler(event: dict, context) -> dict:
         expires_session = datetime.now(timezone.utc) + timedelta(days=30)
         device = (event.get("headers") or {}).get("User-Agent", "unknown")[:200]
         cur.execute(
-            """INSERT INTO sessions (user_id, token, device_info, expires_at)
-               VALUES (%s, %s, %s, %s)""",
+            "INSERT INTO sessions (user_id, token, device_info, expires_at) VALUES (%s, %s, %s, %s)",
             (user["id"], token, device, expires_session),
         )
         conn.commit()
@@ -203,9 +201,7 @@ def handler(event: dict, context) -> dict:
         conn = get_conn()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            """SELECT u.* FROM sessions s
-               JOIN users u ON u.id = s.user_id
-               WHERE s.token=%s AND s.expires_at > %s""",
+            "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token=%s AND s.expires_at > %s",
             (token, now),
         )
         user = cur.fetchone()
@@ -232,4 +228,4 @@ def handler(event: dict, context) -> dict:
             conn.close()
         return ok({"success": True})
 
-    return err("Метод не найден", 404)
+    return err("Маршрут не найден", 404)
