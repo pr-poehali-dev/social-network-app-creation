@@ -154,7 +154,7 @@ function SearchTab({ token }: { token: string }) {
     } finally {
       setLoading(false);
     }
-  }, [token, searchUrl]);
+  }, [token]);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") doSearch(query);
