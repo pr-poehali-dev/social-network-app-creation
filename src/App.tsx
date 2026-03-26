@@ -31,7 +31,20 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
 
   useEffect(() => {
     const savedToken = localStorage.getItem("aura_token");
+    const savedUser = localStorage.getItem("aura_user");
     if (!savedToken) { setChecking(false); return; }
+
+    // Сразу показываем кэшированного пользователя — не ждём сеть
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+        setToken(savedToken);
+        setChecking(false);
+      } catch { /* битый кэш, продолжаем */ }
+    }
+
+    // Фоново обновляем данные с сервера
     fetch(`${AUTH_URL}?action=me`, {
       headers: { "Authorization": `Bearer ${savedToken}`, "X-Authorization": `Bearer ${savedToken}` },
     })
@@ -40,17 +53,24 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
         if (data.user) {
           setUser(data.user);
           setToken(savedToken);
-        } else {
+          localStorage.setItem("aura_user", JSON.stringify(data.user));
+        } else if (data.error && (data.error.includes("истекла") || data.error.includes("авторизован"))) {
+          // Выходим только если сервер явно сказал что сессия невалидна
           localStorage.removeItem("aura_token");
+          localStorage.removeItem("aura_user");
+          setUser(null);
+          setToken("");
         }
+        // Иначе — оставляем кэшированного пользователя
       })
-      .catch(() => localStorage.removeItem("aura_token"))
+      .catch(() => { /* сетевая ошибка — остаёмся залогиненными */ })
       .finally(() => setChecking(false));
   }, []);
 
   const handleAuth = (u: AuthUser, t: string) => {
     setUser(u);
     setToken(t);
+    localStorage.setItem("aura_user", JSON.stringify(u));
   };
 
   const handleLogout = () => {
@@ -62,6 +82,7 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
         body: JSON.stringify({ action: "logout" }),
       }).catch(() => {});
       localStorage.removeItem("aura_token");
+      localStorage.removeItem("aura_user");
     }
     setUser(null);
     setToken("");
