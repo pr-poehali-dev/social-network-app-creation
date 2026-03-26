@@ -33,7 +33,7 @@ function AuthGate({ children }: { children: (user: AuthUser, token: string, onLo
     const savedToken = localStorage.getItem("aura_token");
     if (!savedToken) { setChecking(false); return; }
     fetch(`${AUTH_URL}?action=me`, {
-      headers: { "Authorization": `Bearer ${savedToken}` },
+      headers: { "Authorization": `Bearer ${savedToken}`, "X-Authorization": `Bearer ${savedToken}` },
     })
       .then((r) => r.json())
       .then((data) => {
